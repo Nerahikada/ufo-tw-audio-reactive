@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>U.F.O. TW API テスト</title>
+        <style>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                font-family: system-ui, sans-serif;
+                background: #1a1a2e;
+                color: #e0e0e0;
+                padding: 24px;
+                max-width: 520px;
+                margin: 0 auto;
+            }
+            h1 {
+                font-size: 1.3rem;
+                margin-bottom: 16px;
+                color: #fff;
+            }
+            .card {
+                background: #16213e;
+                border-radius: 12px;
+                padding: 20px;
+                margin-bottom: 16px;
+            }
+            .card h2 {
+                font-size: 0.95rem;
+                color: #8899aa;
+                margin-bottom: 12px;
+            }
+            .status {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 12px;
+            }
+            .dot {
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background: #555;
+                flex-shrink: 0;
+            }
+            .dot.on {
+                background: #4ecca3;
+            }
+            .status-text {
+                font-size: 0.9rem;
+            }
+            button {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 0.9rem;
+                font-weight: 600;
+                transition: opacity 0.15s;
+            }
+            button:hover {
+                opacity: 0.85;
+            }
+            button:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+            .btn-connect {
+                background: #4ecca3;
+                color: #1a1a2e;
+            }
+            .btn-disconnect {
+                background: #e74c3c;
+                color: #fff;
+            }
+            .btn-send {
+                background: #3498db;
+                color: #fff;
+                width: 100%;
+                margin-top: 12px;
+            }
+            .btn-stop {
+                background: #e67e22;
+                color: #fff;
+                width: 100%;
+                margin-top: 8px;
+            }
+            .buttons {
+                display: flex;
+                gap: 8px;
+            }
+            label {
+                display: block;
+                font-size: 0.85rem;
+                color: #8899aa;
+                margin-bottom: 4px;
+            }
+            .control-row {
+                margin-bottom: 12px;
+            }
+            .range-wrap {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .range-wrap input[type="range"] {
+                flex: 1;
+                accent-color: #4ecca3;
+            }
+            .range-val {
+                min-width: 36px;
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+            .dir-options {
+                display: flex;
+                gap: 8px;
+            }
+            .dir-options label {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                color: #e0e0e0;
+                cursor: pointer;
+                font-size: 0.9rem;
+            }
+            .log-area {
+                background: #0f0f23;
+                border-radius: 8px;
+                padding: 12px;
+                height: 200px;
+                overflow-y: auto;
+                font-family: "SF Mono", Consolas, monospace;
+                font-size: 0.8rem;
+                line-height: 1.6;
+                color: #8899aa;
+            }
+            .log-area .info {
+                color: #4ecca3;
+            }
+            .log-area .error {
+                color: #e74c3c;
+            }
+            .log-area .cmd {
+                color: #3498db;
+            }
+            .clear-log {
+                background: transparent;
+                color: #556;
+                font-size: 0.75rem;
+                padding: 4px 8px;
+                border: 1px solid #333;
+                float: right;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>U.F.O. TW API テスト</h1>
+
+        <div class="card">
+            <h2>接続</h2>
+            <div class="status">
+                <div class="dot" id="dot"></div>
+                <span class="status-text" id="statusText">未接続</span>
+            </div>
+            <div class="buttons">
+                <button class="btn-connect" id="btnConnect">接続</button>
+                <button class="btn-disconnect" id="btnDisconnect" disabled>切断</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Parent</h2>
+            <div class="control-row">
+                <label>Direction</label>
+                <div class="dir-options">
+                    <label
+                        ><input type="radio" name="parentDir" value="0" checked /> CW
+                        (時計回り)</label
+                    >
+                    <label
+                        ><input type="radio" name="parentDir" value="1" /> CCW
+                        (反時計回り)</label
+                    >
+                </div>
+            </div>
+            <div class="control-row">
+                <label>Power</label>
+                <div class="range-wrap">
+                    <input type="range" id="parentPower" min="0" max="100" value="0" />
+                    <span class="range-val" id="parentPowerVal">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Child</h2>
+            <div class="control-row">
+                <label>Direction</label>
+                <div class="dir-options">
+                    <label
+                        ><input type="radio" name="childDir" value="0" checked /> CW
+                        (時計回り)</label
+                    >
+                    <label
+                        ><input type="radio" name="childDir" value="1" /> CCW
+                        (反時計回り)</label
+                    >
+                </div>
+            </div>
+            <div class="control-row">
+                <label>Power</label>
+                <div class="range-wrap">
+                    <input type="range" id="childPower" min="0" max="100" value="0" />
+                    <span class="range-val" id="childPowerVal">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <button class="btn-send" id="btnSend" disabled>setSpeed</button>
+            <button class="btn-stop" id="btnStop" disabled>stop</button>
+        </div>
+
+        <div class="card">
+            <h2>ログ <button class="clear-log" id="btnClear">クリア</button></h2>
+            <div class="log-area" id="log"></div>
+        </div>
+
+        <script type="module">
+            import { UfoTw, Motor, Direction } from "../ufo-tw.js";
+
+            const ufo = new UfoTw();
+            window._ufoTw = ufo; // コンソールからアクセス用
+
+            const $ = (s) => document.querySelector(s);
+            const dot = $("#dot");
+            const statusText = $("#statusText");
+            const btnConnect = $("#btnConnect");
+            const btnDisconnect = $("#btnDisconnect");
+            const btnSend = $("#btnSend");
+            const btnStop = $("#btnStop");
+            const parentPower = $("#parentPower");
+            const parentPowerVal = $("#parentPowerVal");
+            const childPower = $("#childPower");
+            const childPowerVal = $("#childPowerVal");
+            const logArea = $("#log");
+
+            function log(msg, cls = "") {
+                const line = document.createElement("div");
+                if (cls) line.className = cls;
+                const ts = new Date().toLocaleTimeString("ja-JP", {
+                    hour12: false,
+                    fractionalSecondDigits: 1,
+                });
+                line.textContent = `[${ts}] ${msg}`;
+                logArea.appendChild(line);
+                logArea.scrollTop = logArea.scrollHeight;
+            }
+
+            function updateUI() {
+                const on = ufo.connected;
+                dot.classList.toggle("on", on);
+                statusText.textContent = on ? `接続中: ${ufo.deviceName}` : "未接続";
+                btnConnect.disabled = on;
+                btnDisconnect.disabled = !on;
+                btnSend.disabled = !on;
+                btnStop.disabled = !on;
+            }
+
+            ufo.addEventListener("disconnect", () => {
+                log("デバイスが切断されました", "error");
+                updateUI();
+            });
+
+            btnConnect.addEventListener("click", async () => {
+                log("接続を開始...", "info");
+                try {
+                    await ufo.connect();
+                    log(`接続成功: ${ufo.deviceName}`, "info");
+                    updateUI();
+                } catch (e) {
+                    log(`接続エラー: ${e.message}`, "error");
+                }
+            });
+
+            btnDisconnect.addEventListener("click", async () => {
+                await ufo.disconnect();
+                log("切断しました", "info");
+                updateUI();
+            });
+
+            parentPower.addEventListener("input", () => {
+                parentPowerVal.textContent = parentPower.value;
+            });
+            childPower.addEventListener("input", () => {
+                childPowerVal.textContent = childPower.value;
+            });
+
+            function getDir(name) {
+                return document.querySelector(`input[name="${name}"]:checked`).value ===
+                    "0"
+                    ? Direction.CW
+                    : Direction.CCW;
+            }
+
+            let sendPending = false;
+            function doSend() {
+                const pDir = getDir("parentDir");
+                const pPow = Number(parentPower.value);
+                const cDir = getDir("childDir");
+                const cPow = Number(childPower.value);
+                try {
+                    ufo.setSpeed(Motor.PARENT, pDir, pPow);
+                    ufo.setSpeed(Motor.CHILD, cDir, cPow);
+                    log(
+                        `setSpeed(PARENT, ${pDir}, ${pPow})  setSpeed(CHILD, ${cDir}, ${cPow})`,
+                        "cmd",
+                    );
+                } catch (e) {
+                    log(`送信エラー: ${e.message}`, "error");
+                }
+            }
+            // ドラッグ中: rAF でスロットル
+            function sendSpeedThrottled() {
+                if (!ufo.connected) return;
+                if (sendPending) return;
+                sendPending = true;
+                requestAnimationFrame(() => {
+                    sendPending = false;
+                    doSend();
+                });
+            }
+            // 指を離した時・確定時: 必ず即送信（最終値を落とさない）
+            function sendSpeedImmediate() {
+                if (!ufo.connected) return;
+                sendPending = false;
+                doSend();
+            }
+
+            // スライダー: ドラッグ中は throttle、離した時は即送信
+            parentPower.addEventListener("input", sendSpeedThrottled);
+            childPower.addEventListener("input", sendSpeedThrottled);
+            parentPower.addEventListener("change", sendSpeedImmediate);
+            childPower.addEventListener("change", sendSpeedImmediate);
+            // ラジオボタン: 即送信
+            document
+                .querySelectorAll('input[name="parentDir"], input[name="childDir"]')
+                .forEach((r) => r.addEventListener("change", sendSpeedImmediate));
+
+            btnSend.addEventListener("click", sendSpeedImmediate);
+
+            btnStop.addEventListener("click", () => {
+                try {
+                    ufo.stop();
+                    log("stop()", "cmd");
+                } catch (e) {
+                    log(`停止エラー: ${e.message}`, "error");
+                }
+            });
+
+            $("#btnClear").addEventListener("click", () => {
+                logArea.innerHTML = "";
+            });
+
+            log(
+                "UfoTw インスタンス作成完了（コンソールから window._ufoTw でアクセス可能）",
+                "info",
+            );
+        </script>
+    </body>
+</html>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8" />
+        <title>U.F.O. TW - Device Name Poll Test</title>
+        <style>
+            body {
+                font-family: monospace;
+                padding: 1em;
+            }
+            #log {
+                white-space: pre-wrap;
+                border: 1px solid #ccc;
+                padding: 1em;
+                margin-top: 1em;
+                min-height: 200px;
+            }
+            button {
+                font-size: 1.2em;
+                padding: 0.4em 1em;
+                margin-right: 0.5em;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>U.F.O. TW - Name Poll Test</h1>
+        <button id="connectBtn">Connect</button>
+        <button id="stopBtn" disabled>Stop Polling</button>
+        <div id="log"></div>
+
+        <script type="module">
+            import { UfoTw } from "../ufo-tw.js";
+
+            const log = document.getElementById("log");
+            const connectBtn = document.getElementById("connectBtn");
+            const stopBtn = document.getElementById("stopBtn");
+
+            function print(msg) {
+                const time = new Date().toLocaleTimeString("ja-JP", {
+                    hour12: false,
+                    fractionalSecondDigits: 1,
+                });
+                log.textContent += `[${time}] ${msg}\n`;
+                log.scrollTop = log.scrollHeight;
+            }
+
+            let polling = false;
+
+            connectBtn.addEventListener("click", async () => {
+                try {
+                    const device = await navigator.bluetooth.requestDevice({
+                        filters: [{ services: [UfoTw.SERVICE_UUID] }],
+                        optionalServices: [0x1800],
+                    });
+
+                    print(`device.name (from advert): ${device.name}`);
+
+                    const server = await device.gatt.connect();
+                    print("GATT connected");
+
+                    // List all characteristics in the U.F.O. TW service
+                    try {
+                        const ufoService = await server.getPrimaryService(
+                            UfoTw.SERVICE_UUID,
+                        );
+                        const chars = await ufoService.getCharacteristics();
+                        print(`--- U.F.O. TW service characteristics (${chars.length}) ---`);
+                        for (const c of chars) {
+                            const props = c.properties;
+                            const flags = [
+                                props.read && "read",
+                                props.write && "write",
+                                props.writeWithoutResponse && "writeNoResp",
+                                props.notify && "notify",
+                                props.indicate && "indicate",
+                            ]
+                                .filter(Boolean)
+                                .join(", ");
+                            print(`  ${c.uuid} [${flags}]`);
+                        }
+                    } catch (e) {
+                        print(`U.F.O. TW service enum failed: ${e.message}`);
+                    }
+
+                    // Read unknown characteristics (3333, 4444)
+                    try {
+                        const ufoService = await server.getPrimaryService(
+                            UfoTw.SERVICE_UUID,
+                        );
+                        for (const uuid of [
+                            "40ee3333-63ec-4b7f-8ce7-712efd55b90e",
+                            "40ee4444-63ec-4b7f-8ce7-712efd55b90e",
+                        ]) {
+                            const c = await ufoService.getCharacteristic(uuid);
+                            const val = await c.readValue();
+                            const bytes = [...new Uint8Array(val.buffer)];
+                            const hex = bytes
+                                .map((b) => b.toString(16).padStart(2, "0"))
+                                .join(" ");
+                            const ascii = bytes
+                                .map((b) =>
+                                    b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".",
+                                )
+                                .join("");
+                            print(
+                                `${uuid.slice(0, 8)}: [${bytes.join(", ")}] hex=[${hex}] ascii="${ascii}"`,
+                            );
+                        }
+                    } catch (e) {
+                        print(`Read unknown chars failed: ${e.message}`);
+                    }
+
+                    // Try reading GAP Device Name
+                    let nameChar = null;
+                    try {
+                        const gap = await server.getPrimaryService(0x1800);
+                        nameChar = await gap.getCharacteristic(0x2a00);
+                        const val = await nameChar.readValue();
+                        const name = new TextDecoder().decode(val);
+                        print(`GAP Device Name: "${name}"`);
+                    } catch (e) {
+                        print(`GAP read failed: ${e.message}`);
+                        print("Falling back to device.name only (no polling possible)");
+                        return;
+                    }
+
+                    // Start polling
+                    polling = true;
+                    connectBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    print("--- polling started (every 2s) ---");
+
+                    let prevName = null;
+                    while (polling && device.gatt.connected) {
+                        try {
+                            const val = await nameChar.readValue();
+                            const name = new TextDecoder().decode(val);
+                            if (name !== prevName) {
+                                print(`Name changed! "${prevName}" -> "${name}"`);
+                                prevName = name;
+                            } else {
+                                print(`Name: "${name}" (no change)`);
+                            }
+                        } catch (e) {
+                            print(`Read error: ${e.message}`);
+                            break;
+                        }
+                        await new Promise((r) => setTimeout(r, 2000));
+                    }
+
+                    print("--- polling stopped ---");
+                    connectBtn.disabled = false;
+                    stopBtn.disabled = true;
+                } catch (e) {
+                    print(`Error: ${e.message}`);
+                    connectBtn.disabled = false;
+                    stopBtn.disabled = true;
+                }
+            });
+
+            stopBtn.addEventListener("click", () => {
+                polling = false;
+            });
+        </script>
+    </body>
+</html>

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Motor Control</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: system-ui, sans-serif;
+        background: #1a1a2e;
+        color: #eee;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100dvh;
+    }
+    .container {
+        width: min(400px, 90vw);
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        padding: 24px;
+    }
+    h1 { font-size: 1.4rem; text-align: center; }
+    .status {
+        text-align: center;
+        font-size: 0.85rem;
+        color: #888;
+    }
+    .status.connected { color: #4ade80; }
+
+    /* meter */
+    .meter-container {
+        position: relative;
+        height: 32px;
+        background: #2a2a3e;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .meter-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+        border-radius: 8px;
+        transition: width 60ms linear;
+    }
+    .meter-gate {
+        position: absolute;
+        top: 0; bottom: 0;
+        width: 2px;
+        background: #fff8;
+    }
+    .meter-label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.75rem;
+        color: #888;
+    }
+
+    /* speed display */
+    .speed-display {
+        text-align: center;
+        font-size: 3rem;
+        font-weight: bold;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+    }
+    .speed-unit { font-size: 1rem; color: #888; font-weight: normal; }
+
+    /* controls */
+    .controls { display: flex; flex-direction: column; gap: 12px; }
+    label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.85rem;
+    }
+    input[type=range] { width: 55%; accent-color: #6366f1; }
+    select {
+        background: #2a2a3e;
+        color: #eee;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 0.85rem;
+    }
+
+    button {
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+    }
+    button:active { opacity: 0.8; }
+    .btn-connect { background: #6366f1; color: #fff; }
+    .btn-connect.active { background: #ef4444; }
+    .btn-start { background: #22c55e; color: #fff; }
+    .btn-start.active { background: #eab308; color: #000; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Voice Motor Control</h1>
+    <div class="status" id="status">未接続</div>
+
+    <div>
+        <div class="meter-container">
+            <div class="meter-fill" id="meterFill"></div>
+            <div class="meter-gate" id="meterGate" style="left: 10%"></div>
+        </div>
+        <div class="meter-label">
+            <span>静か</span>
+            <span id="gateLabel">ゲート: 10%</span>
+            <span>大声</span>
+        </div>
+    </div>
+
+    <div class="speed-display">
+        <span id="speedValue">0</span>
+        <span class="speed-unit">/ 100</span>
+    </div>
+
+    <div class="controls">
+        <label>
+            モーター
+            <select id="motorSelect">
+                <option value="both">両方</option>
+                <option value="parent">左 (Parent)</option>
+                <option value="child">右 (Child)</option>
+            </select>
+        </label>
+        <label>
+            回転方向
+            <select id="dirSelect">
+                <option value="cw">時計回り (CW)</option>
+                <option value="ccw">反時計回り (CCW)</option>
+            </select>
+        </label>
+        <label>
+            感度
+            <input type="range" id="sensitivity" min="1" max="5" step="0.1" value="2.5">
+        </label>
+        <label>
+            ノイズゲート
+            <input type="range" id="gate" min="0" max="30" step="1" value="10">
+        </label>
+        <label>
+            スムージング
+            <input type="range" id="smoothing" min="0.5" max="0.98" step="0.01" value="0.85">
+        </label>
+    </div>
+
+    <button class="btn-connect" id="btnConnect">BLE 接続</button>
+    <button class="btn-start" id="btnStart" disabled>マイク開始</button>
+</div>
+
+<script type="module">
+import { UfoTw, Motor, Direction } from "../ufo-tw.js";
+
+const ufo = new UfoTw();
+
+// DOM
+const $status = document.getElementById("status");
+const $meterFill = document.getElementById("meterFill");
+const $meterGate = document.getElementById("meterGate");
+const $gateLabel = document.getElementById("gateLabel");
+const $speedValue = document.getElementById("speedValue");
+const $motorSelect = document.getElementById("motorSelect");
+const $dirSelect = document.getElementById("dirSelect");
+const $sensitivity = document.getElementById("sensitivity");
+const $gate = document.getElementById("gate");
+const $smoothing = document.getElementById("smoothing");
+const $btnConnect = document.getElementById("btnConnect");
+const $btnStart = document.getElementById("btnStart");
+
+// State
+let audioCtx = null;
+let analyser = null;
+let micStream = null;
+let running = false;
+let smoothedLevel = 0;
+
+// --- BLE ---
+$btnConnect.addEventListener("click", async () => {
+    if (ufo.connected) {
+        await ufo.disconnect();
+        return;
+    }
+    try {
+        $status.textContent = "接続中…";
+        await ufo.connect();
+        $status.textContent = `接続: ${ufo.deviceName}`;
+        $status.className = "status connected";
+        $btnConnect.textContent = "切断";
+        $btnConnect.classList.add("active");
+        $btnStart.disabled = false;
+    } catch (e) {
+        $status.textContent = `接続失敗: ${e.message}`;
+        $status.className = "status";
+    }
+});
+
+ufo.addEventListener("disconnect", () => {
+    $status.textContent = "切断されました";
+    $status.className = "status";
+    $btnConnect.textContent = "BLE 接続";
+    $btnConnect.classList.remove("active");
+    $btnStart.disabled = true;
+    stopMic();
+});
+
+// --- Mic ---
+$btnStart.addEventListener("click", () => {
+    if (running) { stopMic(); return; }
+    startMic();
+});
+
+async function startMic() {
+    try {
+        audioCtx = new AudioContext();
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const source = audioCtx.createMediaStreamSource(micStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        running = true;
+        $btnStart.textContent = "停止";
+        $btnStart.classList.add("active");
+        loop();
+    } catch (e) {
+        $status.textContent = `マイクエラー: ${e.message}`;
+    }
+}
+
+function stopMic() {
+    running = false;
+    micStream?.getTracks().forEach(t => t.stop());
+    micStream = null;
+    audioCtx?.close();
+    audioCtx = null;
+    analyser = null;
+    smoothedLevel = 0;
+    $btnStart.textContent = "マイク開始";
+    $btnStart.classList.remove("active");
+    $meterFill.style.width = "0%";
+    $speedValue.textContent = "0";
+    if (ufo.connected) ufo.stop();
+}
+
+// --- Gate slider ---
+$gate.addEventListener("input", () => {
+    const v = $gate.value;
+    $meterGate.style.left = v + "%";
+    $gateLabel.textContent = `ゲート: ${v}%`;
+});
+
+// --- Audio loop ---
+function loop() {
+    if (!running) return;
+    requestAnimationFrame(loop);
+
+    const buf = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(buf);
+
+    // RMS
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length);
+
+    // Sensitivity maps RMS to 0-100 range.
+    // Typical speech RMS ~0.02-0.15, shout ~0.3+
+    const sens = parseFloat($sensitivity.value);
+    const raw = Math.min(rms * sens * 200, 100);
+
+    // Exponential smoothing
+    const alpha = 1 - parseFloat($smoothing.value);
+    smoothedLevel = smoothedLevel * (1 - alpha) + raw * alpha;
+
+    // Noise gate
+    const gateThreshold = parseFloat($gate.value);
+    const gated = smoothedLevel < gateThreshold ? 0 : smoothedLevel;
+
+    // Motor speed: remap gate..100 → 0..100
+    let speed = 0;
+    if (gated > 0) {
+        speed = Math.round(((gated - gateThreshold) / (100 - gateThreshold)) * 100);
+        speed = Math.min(speed, 100);
+    }
+
+    // Update UI
+    $meterFill.style.width = smoothedLevel.toFixed(1) + "%";
+    $speedValue.textContent = speed;
+
+    // Update motor
+    if (!ufo.connected) return;
+    const dir = $dirSelect.value === "cw" ? Direction.CW : Direction.CCW;
+    const motor = $motorSelect.value;
+
+    if (speed === 0) {
+        ufo.stop();
+    } else if (motor === "both") {
+        ufo.setSpeed(Motor.PARENT, dir, speed);
+        ufo.setSpeed(Motor.CHILD, dir, speed);
+    } else if (motor === "parent") {
+        ufo.setSpeed(Motor.PARENT, dir, speed);
+    } else {
+        ufo.setSpeed(Motor.CHILD, dir, speed);
+    }
+}
+</script>
+</body>
+</html>
