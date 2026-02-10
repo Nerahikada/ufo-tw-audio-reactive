@@ -16,6 +16,7 @@ body {
     background: var(--color-bg);
     color: #eee;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     min-height: 100dvh;
@@ -225,3 +226,20 @@ button.btn-action:active { opacity: 0.8; }
 .btn-connect.active { background: var(--color-danger); }
 
 button.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- footer ---- */
+
+.footer {
+    text-align: center;
+    padding: 16px 0;
+    font-size: 0.8rem;
+    color: var(--color-muted);
+}
+
+.footer a {
+    color: var(--color-muted);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+.footer a:hover { color: #eee; }
