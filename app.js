@@ -1,7 +1,8 @@
-import { UfoTw, Motor, Direction } from "./ufo-tw.js";
+import { UfoTw, Motor } from "./ufo-tw.js";
 import { AudioReactive } from "./audio-reactive.js";
 import { AudioPlayer } from "./audio-player.js";
 import { MotorVisualizer } from "./motor-vis.js";
+import { POLICIES, DEFAULT_POLICY_ID } from "./mapping.js";
 
 // ---- Instances ----
 
@@ -26,7 +27,7 @@ const motorVis = new MotorVisualizer({
   childSpeed: document.getElementById("childSpeedVis"),
 });
 
-// ---- DOM refs (remaining) ----
+// ---- DOM refs ----
 
 const $status = document.getElementById("status");
 const $btnConnect = document.getElementById("btnConnect");
@@ -34,18 +35,80 @@ const $meterFill = document.getElementById("meterFill");
 const $meterGate = document.getElementById("meterGate");
 const $gateLabel = document.getElementById("gateLabel");
 const $sensitivity = document.getElementById("sensitivity");
-const $gate = document.getElementById("gate");
 const $smoothing = document.getElementById("smoothing");
 const $sustain = document.getElementById("sustain");
 const $beatCooldown = document.getElementById("beatCooldown");
-const $separation = document.getElementById("separation");
+const $policySelect = document.getElementById("policySelect");
+const $policyControls = document.getElementById("policyControls");
+
+// ---- Policy management ----
+
+let currentPolicy = null;
+let policyParams = {};
+
+function setPolicy(id) {
+  const factory = POLICIES.get(id);
+  if (!factory) return;
+  currentPolicy = factory();
+  policyParams = {};
+  renderPolicyControls(currentPolicy.params);
+  updateGateMeter();
+}
+
+function renderPolicyControls(paramDefs) {
+  $policyControls.innerHTML = "";
+  for (const def of paramDefs) {
+    const label = document.createElement("label");
+    const text = document.createTextNode(def.label + " ");
+    label.appendChild(text);
+
+    if (def.type === "range") {
+      const input = document.createElement("input");
+      input.type = "range";
+      input.min = def.min;
+      input.max = def.max;
+      input.step = def.step;
+      input.value = def.value;
+      policyParams[def.id] = def.value;
+      input.addEventListener("input", () => {
+        policyParams[def.id] = parseFloat(input.value);
+        updateGateMeter();
+      });
+      label.appendChild(input);
+    }
+
+    $policyControls.appendChild(label);
+  }
+}
+
+function updateGateMeter() {
+  const gate = policyParams.gateThreshold;
+  if (gate != null) {
+    $meterGate.style.left = gate + "%";
+    $meterGate.hidden = false;
+    $gateLabel.textContent = `ゲート: ${gate}%`;
+  } else {
+    $meterGate.hidden = true;
+    $gateLabel.textContent = "";
+  }
+}
+
+// Populate policy selector from registry
+for (const [id, factory] of POLICIES) {
+  const opt = document.createElement("option");
+  opt.value = id;
+  opt.textContent = factory().name;
+  $policySelect.appendChild(opt);
+}
+
+$policySelect.addEventListener("change", () => {
+  setPolicy($policySelect.value);
+});
 
 // ---- Audio state ----
 
 let reactive = null;
 let animId = null;
-let beatDirL = false;
-let beatDirR = false;
 
 // ---- Player events ----
 
@@ -83,24 +146,6 @@ ufo.addEventListener("disconnect", () => {
   $btnConnect.classList.remove("active");
 });
 
-// ---- Gate slider ----
-
-$gate.addEventListener("input", () => {
-  const v = $gate.value;
-  $meterGate.style.left = v + "%";
-  $gateLabel.textContent = `ゲート: ${v}%`;
-});
-
-// ---- Helpers ----
-
-function gateToSpeed(level, gateThreshold) {
-  if (level < gateThreshold) return 0;
-  return Math.min(
-    Math.round(((level - gateThreshold) / (100 - gateThreshold)) * 100),
-    100,
-  );
-}
-
 // ---- Analysis loop ----
 
 function startLoop() {
@@ -111,55 +156,31 @@ function startLoop() {
     });
   }
   reactive.reset();
-  beatDirL = false;
-  beatDirR = false;
+  currentPolicy?.reset();
 
   function tick() {
     animId = requestAnimationFrame(tick);
 
-    const result = reactive.update({
+    const features = reactive.update({
       sensitivity: parseFloat($sensitivity.value),
       smoothing: parseFloat($smoothing.value),
       sustain: parseFloat($sustain.value),
       beatCooldown: parseInt($beatCooldown.value),
     });
 
-    $meterFill.style.width = result.level.toFixed(1) + "%";
+    $meterFill.style.width = features.level.toFixed(1) + "%";
 
-    const gateThreshold = parseFloat($gate.value);
-    const sep = parseFloat($separation.value);
+    if (!currentPolicy) return;
+    const cmd = currentPolicy.map(features, policyParams);
 
-    // Blend L/R toward mono based on separation (0 = mono, 1 = full stereo)
-    const mono = (result.left + result.right) / 2;
-    const effectiveL = mono + (result.left - mono) * sep;
-    const effectiveR = mono + (result.right - mono) * sep;
+    motorVis.update(cmd.parentDir, cmd.parentSpeed, cmd.childDir, cmd.childSpeed);
 
-    const pSpd = gateToSpeed(effectiveL, gateThreshold);
-    const cSpd = gateToSpeed(effectiveR, gateThreshold);
-
-    // Beat-driven direction toggle
-    if (sep < 0.5) {
-      if (result.beatL || result.beatR) {
-        beatDirL = !beatDirL;
-        beatDirR = !beatDirR;
-      }
-    } else {
-      if (result.beatL) beatDirL = !beatDirL;
-      if (result.beatR) beatDirR = !beatDirR;
-    }
-
-    const pDir = beatDirL ? Direction.CW : Direction.CCW;
-    const cDir = beatDirR ? Direction.CW : Direction.CCW;
-
-    motorVis.update(pDir, pSpd, cDir, cSpd);
-
-    // Send to hardware
     if (!ufo.connected) return;
-    if (pSpd === 0 && cSpd === 0) {
+    if (cmd.parentSpeed === 0 && cmd.childSpeed === 0) {
       ufo.stop();
     } else {
-      ufo.setSpeed(Motor.PARENT, pDir, pSpd);
-      ufo.setSpeed(Motor.CHILD, cDir, cSpd);
+      ufo.setSpeed(Motor.PARENT, cmd.parentDir, cmd.parentSpeed);
+      ufo.setSpeed(Motor.CHILD, cmd.childDir, cmd.childSpeed);
     }
   }
 
@@ -172,8 +193,11 @@ function stopLoop() {
     animId = null;
   }
   reactive?.reset();
-  beatDirL = false;
-  beatDirR = false;
+  currentPolicy?.reset();
   $meterFill.style.width = "0%";
   motorVis.reset();
 }
+
+// ---- Initialize ----
+
+setPolicy(DEFAULT_POLICY_ID);
