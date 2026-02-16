@@ -396,6 +396,97 @@ export class PatternMapping {
   }
 }
 
+// ---- BinauralMapping ----
+
+/**
+ * Binaural mapping: uses the pan value from AudioReactive to create
+ * asymmetric motor speeds that follow the spatial position of sound.
+ *
+ * When sound moves to the left ear, the parent (L) motor intensifies
+ * while the child (R) motor eases off, and vice versa.
+ */
+export class BinauralMapping {
+  name = "バイノーラル";
+
+  #beatDirL = false;
+  #beatDirR = false;
+
+  params = [
+    {
+      id: "gateThreshold",
+      label: "ノイズゲート",
+      type: "range",
+      min: 0,
+      max: 30,
+      step: 1,
+      value: 0,
+    },
+    {
+      id: "panInfluence",
+      label: "空間追従",
+      type: "range",
+      min: 0,
+      max: 1,
+      step: 0.05,
+      value: 0.7,
+    },
+    {
+      id: "panBoost",
+      label: "集中ブースト",
+      type: "range",
+      min: 1,
+      max: 1.5,
+      step: 0.05,
+      value: 1.2,
+    },
+  ];
+
+  reset() {
+    this.#beatDirL = false;
+    this.#beatDirR = false;
+  }
+
+  map(f, p) {
+    const gate = p.gateThreshold;
+    const pan = f.pan || 0; // -1 (left) to +1 (right)
+    const influence = p.panInfluence;
+    const boost = p.panBoost;
+
+    const baseSpeed = gateToSpeed(f.level, gate);
+
+    // Pan → asymmetric motor speeds
+    // pan=-1 (full left): parentMul=boost, childMul=1-influence
+    // pan= 0 (center):    both=1
+    // pan=+1 (full right): parentMul=1-influence, childMul=boost
+    const leftBoost = clamp(1 + Math.max(0, -pan) * (boost - 1), 0, boost);
+    const rightBoost = clamp(1 + Math.max(0, pan) * (boost - 1), 0, boost);
+    const leftAtten = 1 - Math.max(0, pan) * influence;
+    const rightAtten = 1 - Math.max(0, -pan) * influence;
+
+    const parentSpeed = clamp(
+      Math.round(baseSpeed * leftAtten * leftBoost),
+      0,
+      100,
+    );
+    const childSpeed = clamp(
+      Math.round(baseSpeed * rightAtten * rightBoost),
+      0,
+      100,
+    );
+
+    // Direction from per-channel beats
+    if (f.beatL) this.#beatDirL = !this.#beatDirL;
+    if (f.beatR) this.#beatDirR = !this.#beatDirR;
+
+    return {
+      parentDir: this.#beatDirL ? Direction.CW : Direction.CCW,
+      parentSpeed,
+      childDir: this.#beatDirR ? Direction.CW : Direction.CCW,
+      childSpeed,
+    };
+  }
+}
+
 // ---- Policy registry ----
 
 /** All available mapping policies. Values are factory functions. */
@@ -403,6 +494,7 @@ export const POLICIES = new Map([
   ["basic", () => new BasicMapping()],
   ["teasing", () => new TeasingMapping()],
   ["pattern", () => new PatternMapping()],
+  ["binaural", () => new BinauralMapping()],
 ]);
 
 export const DEFAULT_POLICY_ID = "basic";
