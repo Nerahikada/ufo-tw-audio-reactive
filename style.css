@@ -32,6 +32,34 @@ body {
 
 h1 { font-size: 1.4rem; text-align: center; }
 
+.header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.header-end {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.main-content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.panel-source,
+.panel-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
 .status {
     text-align: center;
     font-size: 0.85rem;
@@ -256,3 +284,52 @@ button.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .footer a:hover { color: #eee; }
+
+/* ---- desktop ---- */
+
+@media (min-width: 1024px) {
+    .container {
+        width: min(1080px, 92vw);
+        padding: 32px 40px;
+    }
+
+    .header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .header-end {
+        flex-direction: row;
+        width: auto;
+        gap: 16px;
+    }
+
+    .header-end .btn-connect {
+        padding: 8px 24px;
+    }
+
+    .main-content {
+        flex-direction: row;
+        gap: 32px;
+        align-items: flex-start;
+    }
+
+    .panel-source,
+    .panel-dashboard {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .track-list {
+        max-height: 360px;
+    }
+
+    .motor-unit {
+        padding: 16px 12px;
+    }
+
+    .motor-speed-val {
+        font-size: 3rem;
+    }
+}
