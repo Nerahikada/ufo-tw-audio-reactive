@@ -32,6 +32,21 @@ body {
 
 h1 { font-size: 1.4rem; text-align: center; }
 
+.header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.header-end {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
 .status {
     text-align: center;
     font-size: 0.85rem;
