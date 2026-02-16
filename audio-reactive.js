@@ -4,30 +4,50 @@
  * Wraps an AnalyserNode and exposes per-frame analysis results:
  * overall level, bass/treble energy, beat detection, and spectral centroid.
  */
+
+// Frequency band boundaries (fraction of FFT bins)
+// At 44.1 kHz / fftSize 1024:
+const BASS_END = 0.03; //   ~0–650 Hz
+const TREBLE_START = 0.1; //  ~2 kHz
+const TREBLE_END = 0.5; // ~11 kHz
+
+// Per-band sensitivity multipliers
+const LEVEL_GAIN = 200;
+const BASS_GAIN = 300;
+const TREBLE_GAIN = 400;
+
+// Spectral centroid uses its own fixed smoothing
+const CENTROID_ALPHA = 0.15;
+
+// Beat detection
+const BEAT_HISTORY_LEN = 30;
+const BEAT_MIN_HISTORY = 10;
+const BEAT_THRESHOLD = 1.5;
+const BEAT_MIN_LEVEL = 5;
+
 export class AudioReactive {
   #analyser;
+  #analyserL;
+  #analyserR;
+
+  // Pre-allocated buffers (avoid per-frame allocation)
+  #timeBuf;
   #freqData;
+  #timeBufL;
+  #timeBufR;
 
   // Smoothed values
   #level = 0;
   #bass = 0;
   #treble = 0;
   #centroid = 0.5;
-
-  // Stereo (optional)
-  #analyserL;
-  #analyserR;
   #left = 0;
   #right = 0;
 
-  // Beat detection (mono)
-  #energyHistory = [];
-  #beatCooldown = 0;
-  // Beat detection (per-channel)
-  #energyHistoryL = [];
-  #energyHistoryR = [];
-  #beatCooldownL = 0;
-  #beatCooldownR = 0;
+  // Beat detectors
+  #beat;
+  #beatL;
+  #beatR;
 
   /**
    * @param {AnalyserNode} analyser  Main (mono-mix) analyser
@@ -38,7 +58,15 @@ export class AudioReactive {
     this.#analyser = analyser;
     this.#analyserL = left ?? null;
     this.#analyserR = right ?? null;
+
+    this.#timeBuf = new Float32Array(analyser.fftSize);
     this.#freqData = new Uint8Array(analyser.frequencyBinCount);
+    this.#timeBufL = left ? new Float32Array(left.fftSize) : null;
+    this.#timeBufR = right ? new Float32Array(right.fftSize) : null;
+
+    this.#beat = new BeatDetector();
+    this.#beatL = new BeatDetector();
+    this.#beatR = new BeatDetector();
   }
 
   /** Reset all internal smoothing / history state. */
@@ -49,12 +77,9 @@ export class AudioReactive {
     this.#centroid = 0.5;
     this.#left = 0;
     this.#right = 0;
-    this.#energyHistory = [];
-    this.#beatCooldown = 0;
-    this.#energyHistoryL = [];
-    this.#energyHistoryR = [];
-    this.#beatCooldownL = 0;
-    this.#beatCooldownR = 0;
+    this.#beat.reset();
+    this.#beatL.reset();
+    this.#beatR.reset();
   }
 
   /**
@@ -71,94 +96,47 @@ export class AudioReactive {
    */
   update({ sensitivity, smoothing, sustain = 0, beatCooldown = 30 }) {
     const alpha = 1 - smoothing;
-    // Release alpha: when signal drops, decay slower based on sustain
     const releaseAlpha = alpha * (1 - sustain);
 
-    // ---- RMS from time-domain data ----
-    const timeBuf = new Float32Array(this.#analyser.fftSize);
-    this.#analyser.getFloatTimeDomainData(timeBuf);
-    let sum = 0;
-    for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
-    const rms = Math.sqrt(sum / timeBuf.length);
-
-    const rawLevel = Math.min(rms * sensitivity * 200, 100);
-    this.#level +=
-      (rawLevel - this.#level) *
-      (rawLevel >= this.#level ? alpha : releaseAlpha);
-
-    // ---- Frequency-domain data ----
-    this.#analyser.getByteFrequencyData(this.#freqData);
-    const n = this.#freqData.length;
+    // ---- Mono level (RMS) ----
+    const rawLevel = clamp100(
+      this.#rms(this.#analyser, this.#timeBuf) * sensitivity * LEVEL_GAIN,
+    );
+    this.#level = smooth(this.#level, rawLevel, alpha, releaseAlpha);
 
     // ---- Frequency bands ----
-    //  Bass  : first ~3 % of bins  (~0 – 650 Hz at 44.1 kHz / fftSize 1024)
-    //  Treble: 10 %–50 % of bins   (~2 kHz – 11 kHz)
-    const bassEnd = Math.max(Math.floor(n * 0.03), 2);
-    const trebleStart = Math.floor(n * 0.1);
-    const trebleEnd = Math.floor(n * 0.5);
+    this.#analyser.getByteFrequencyData(this.#freqData);
 
-    let bassSum = 0;
-    for (let i = 1; i < bassEnd; i++) bassSum += this.#freqData[i];
-
-    let trebleSum = 0;
-    for (let i = trebleStart; i < trebleEnd; i++)
-      trebleSum += this.#freqData[i];
-
-    const rawBass = Math.min(
-      (bassSum / (bassEnd - 1) / 255) * sensitivity * 300,
-      100,
-    );
-    const rawTreble = Math.min(
-      (trebleSum / (trebleEnd - trebleStart) / 255) * sensitivity * 400,
-      100,
+    const rawBass = this.#bandEnergy(0, BASS_END, sensitivity * BASS_GAIN);
+    const rawTreble = this.#bandEnergy(
+      TREBLE_START,
+      TREBLE_END,
+      sensitivity * TREBLE_GAIN,
     );
     this.#bass += (rawBass - this.#bass) * alpha;
     this.#treble += (rawTreble - this.#treble) * alpha;
 
-    // ---- Beat detection (energy-flux, mono) ----
-    let beat;
-    [beat, this.#beatCooldown] = AudioReactive.#detectBeat(
-      rawLevel,
-      this.#energyHistory,
-      this.#beatCooldown,
-      beatCooldown,
-    );
+    // ---- Beat detection (mono) ----
+    const beat = this.#beat.detect(rawLevel, beatCooldown);
 
     // ---- Spectral centroid ----
-    let weightedSum = 0;
-    let totalMag = 0;
-    for (let i = 1; i < n; i++) {
-      weightedSum += i * this.#freqData[i];
-      totalMag += this.#freqData[i];
-    }
-    const rawCentroid = totalMag === 0 ? 0.5 : weightedSum / totalMag / n;
-    this.#centroid += (rawCentroid - this.#centroid) * 0.15;
+    this.#centroid = this.#updateCentroid();
 
-    // ---- Stereo channel levels + per-channel beats ----
+    // ---- Stereo levels + per-channel beats ----
     let beatL = false,
       beatR = false;
     if (this.#analyserL && this.#analyserR) {
-      const rmsL = this.#channelRMS(this.#analyserL);
-      const rmsR = this.#channelRMS(this.#analyserR);
-      const rawL = Math.min(rmsL * sensitivity * 200, 100);
-      const rawR = Math.min(rmsR * sensitivity * 200, 100);
-      this.#left +=
-        (rawL - this.#left) * (rawL >= this.#left ? alpha : releaseAlpha);
-      this.#right +=
-        (rawR - this.#right) * (rawR >= this.#right ? alpha : releaseAlpha);
+      const rawL = clamp100(
+        this.#rms(this.#analyserL, this.#timeBufL) * sensitivity * LEVEL_GAIN,
+      );
+      const rawR = clamp100(
+        this.#rms(this.#analyserR, this.#timeBufR) * sensitivity * LEVEL_GAIN,
+      );
+      this.#left = smooth(this.#left, rawL, alpha, releaseAlpha);
+      this.#right = smooth(this.#right, rawR, alpha, releaseAlpha);
 
-      [beatL, this.#beatCooldownL] = AudioReactive.#detectBeat(
-        rawL,
-        this.#energyHistoryL,
-        this.#beatCooldownL,
-        beatCooldown,
-      );
-      [beatR, this.#beatCooldownR] = AudioReactive.#detectBeat(
-        rawR,
-        this.#energyHistoryR,
-        this.#beatCooldownR,
-        beatCooldown,
-      );
+      beatL = this.#beatL.detect(rawL, beatCooldown);
+      beatR = this.#beatR.detect(rawR, beatCooldown);
     }
 
     return {
@@ -175,26 +153,77 @@ export class AudioReactive {
     };
   }
 
-  /**
-   * Energy-flux beat detection on a single stream.
-   * Mutates history in place; returns [detected, newCooldown].
-   */
-  static #detectBeat(raw, history, cooldown, cooldownFrames) {
-    history.push(raw);
-    if (history.length > 30) history.shift();
-    if (cooldown > 0) return [false, cooldown - 1];
-    if (history.length < 10) return [false, 0];
-    const avg = history.reduce((a, b) => a + b) / history.length;
-    if (raw > avg * 1.5 && raw > 5) return [true, cooldownFrames];
-    return [false, 0];
+  /** Compute RMS of an AnalyserNode into a pre-allocated buffer. */
+  #rms(node, buf) {
+    node.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    return Math.sqrt(sum / buf.length);
   }
 
-  /** Compute RMS of a single-channel AnalyserNode. */
-  #channelRMS(node) {
-    const buf = new Float32Array(node.fftSize);
-    node.getFloatTimeDomainData(buf);
-    let s = 0;
-    for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
-    return Math.sqrt(s / buf.length);
+  /** Average energy in a frequency band (bin fractions), scaled to 0–100. */
+  #bandEnergy(startFrac, endFrac, gain) {
+    const n = this.#freqData.length;
+    const start = Math.max(Math.floor(n * startFrac), 1);
+    const end = Math.max(Math.floor(n * endFrac), start + 1);
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += this.#freqData[i];
+    return clamp100((sum / (end - start) / 255) * gain);
+  }
+
+  /** Smooth spectral centroid toward the current frame's value. */
+  #updateCentroid() {
+    const n = this.#freqData.length;
+    let weightedSum = 0;
+    let totalMag = 0;
+    for (let i = 1; i < n; i++) {
+      weightedSum += i * this.#freqData[i];
+      totalMag += this.#freqData[i];
+    }
+    const raw = totalMag === 0 ? 0.5 : weightedSum / totalMag / n;
+    return this.#centroid + (raw - this.#centroid) * CENTROID_ALPHA;
+  }
+}
+
+// ---- Helpers ----
+
+/** Attack/release exponential smoothing. */
+function smooth(current, target, attackAlpha, releaseAlpha) {
+  const a = target >= current ? attackAlpha : releaseAlpha;
+  return current + (target - current) * a;
+}
+
+function clamp100(v) {
+  return Math.min(v, 100);
+}
+
+// ---- Beat detection ----
+
+class BeatDetector {
+  #history = [];
+  #cooldown = 0;
+
+  reset() {
+    this.#history = [];
+    this.#cooldown = 0;
+  }
+
+  /** Returns true if a beat was detected this frame. */
+  detect(level, cooldownFrames) {
+    this.#history.push(level);
+    if (this.#history.length > BEAT_HISTORY_LEN) this.#history.shift();
+
+    if (this.#cooldown > 0) {
+      this.#cooldown--;
+      return false;
+    }
+    if (this.#history.length < BEAT_MIN_HISTORY) return false;
+
+    const avg = this.#history.reduce((a, b) => a + b) / this.#history.length;
+    if (level > avg * BEAT_THRESHOLD && level > BEAT_MIN_LEVEL) {
+      this.#cooldown = cooldownFrames;
+      return true;
+    }
+    return false;
   }
 }
