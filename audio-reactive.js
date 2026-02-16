@@ -2,7 +2,8 @@
  * Audio analysis for reactive motor control.
  *
  * Wraps an AnalyserNode and exposes per-frame analysis results:
- * overall level, bass/treble energy, beat detection, and spectral centroid.
+ * overall level, bass/treble energy, beat detection, spectral centroid,
+ * spectral flux, onset detection, and stereo pan tracking.
  */
 
 // Frequency band boundaries (fraction of FFT bins)
@@ -15,15 +16,22 @@ const TREBLE_END = 0.5; // ~11 kHz
 const LEVEL_GAIN = 200;
 const BASS_GAIN = 300;
 const TREBLE_GAIN = 400;
+const FLUX_GAIN = 2;
 
 // Spectral centroid uses its own fixed smoothing
 const CENTROID_ALPHA = 0.15;
+
+// Pan smoothing
+const PAN_ALPHA = 0.1;
 
 // Beat detection
 const BEAT_HISTORY_LEN = 30;
 const BEAT_MIN_HISTORY = 10;
 const BEAT_THRESHOLD = 1.5;
 const BEAT_MIN_LEVEL = 5;
+
+// Onset detection (based on spectral flux, shorter cooldown)
+const ONSET_COOLDOWN = 8;
 
 export class AudioReactive {
   #analyser;
@@ -33,6 +41,7 @@ export class AudioReactive {
   // Pre-allocated buffers (avoid per-frame allocation)
   #timeBuf;
   #freqData;
+  #prevFreqData;
   #timeBufL;
   #timeBufR;
 
@@ -41,13 +50,16 @@ export class AudioReactive {
   #bass = 0;
   #treble = 0;
   #centroid = 0.5;
+  #spectralFlux = 0;
   #left = 0;
   #right = 0;
+  #pan = 0;
 
-  // Beat detectors
+  // Beat / onset detectors
   #beat;
   #beatL;
   #beatR;
+  #onset;
 
   /**
    * @param {AnalyserNode} analyser  Main (mono-mix) analyser
@@ -61,12 +73,14 @@ export class AudioReactive {
 
     this.#timeBuf = new Float32Array(analyser.fftSize);
     this.#freqData = new Uint8Array(analyser.frequencyBinCount);
+    this.#prevFreqData = new Uint8Array(analyser.frequencyBinCount);
     this.#timeBufL = left ? new Float32Array(left.fftSize) : null;
     this.#timeBufR = right ? new Float32Array(right.fftSize) : null;
 
     this.#beat = new BeatDetector();
     this.#beatL = new BeatDetector();
     this.#beatR = new BeatDetector();
+    this.#onset = new BeatDetector();
   }
 
   /** Reset all internal smoothing / history state. */
@@ -75,23 +89,30 @@ export class AudioReactive {
     this.#bass = 0;
     this.#treble = 0;
     this.#centroid = 0.5;
+    this.#spectralFlux = 0;
     this.#left = 0;
     this.#right = 0;
+    this.#pan = 0;
+    this.#prevFreqData.fill(0);
     this.#beat.reset();
     this.#beatL.reset();
     this.#beatR.reset();
+    this.#onset.reset();
   }
 
   /**
    * Run one frame of analysis.  Call once per `requestAnimationFrame`.
    *
-   * @param {{ sensitivity: number, smoothing: number }} opts
-   *   - sensitivity: multiplier for raw energy (default UI range 0.5–5)
-   *   - smoothing: exponential smoothing factor (0 = none, 1 = frozen)
+   * @param {{ sensitivity: number, smoothing: number, sustain?: number, beatCooldown?: number }} opts
    * @returns {{
-   *   level: number,     rawLevel: number,
-   *   bass: number,      treble: number,
-   *   beat: boolean,     centroid: number,
+   *   level: number, rawLevel: number,
+   *   bass: number, treble: number,
+   *   beat: boolean, centroid: number,
+   *   spectralFlux: number, onset: boolean,
+   *   left: number, right: number,
+   *   beatL: boolean, beatR: boolean,
+   *   pan: number,
+   *   freqData: Uint8Array, timeBuf: Float32Array,
    * }}
    */
   update({ sensitivity, smoothing, sustain = 0, beatCooldown = 30 }) {
@@ -116,13 +137,32 @@ export class AudioReactive {
     this.#bass += (rawBass - this.#bass) * alpha;
     this.#treble += (rawTreble - this.#treble) * alpha;
 
+    // ---- Spectral flux (frame-to-frame spectral change) ----
+    const n = this.#freqData.length;
+    let flux = 0;
+    for (let i = 0; i < n; i++) {
+      const diff = this.#freqData[i] - this.#prevFreqData[i];
+      if (diff > 0) flux += diff;
+    }
+    this.#prevFreqData.set(this.#freqData);
+    const rawFlux = clamp100((flux / n) * sensitivity * FLUX_GAIN);
+    this.#spectralFlux = smooth(
+      this.#spectralFlux,
+      rawFlux,
+      alpha,
+      releaseAlpha,
+    );
+
+    // ---- Onset detection (spectral flux spike) ----
+    const onset = this.#onset.detect(rawFlux, ONSET_COOLDOWN);
+
     // ---- Beat detection (mono) ----
     const beat = this.#beat.detect(rawLevel, beatCooldown);
 
     // ---- Spectral centroid ----
     this.#centroid = this.#updateCentroid();
 
-    // ---- Stereo levels + per-channel beats ----
+    // ---- Stereo levels + per-channel beats + pan ----
     let beatL = false,
       beatR = false;
     if (this.#analyserL && this.#analyserR) {
@@ -137,6 +177,11 @@ export class AudioReactive {
 
       beatL = this.#beatL.detect(rawL, beatCooldown);
       beatR = this.#beatR.detect(rawR, beatCooldown);
+
+      // Pan tracking: -1 = full left, +1 = full right
+      const totalLR = rawL + rawR;
+      const rawPan = totalLR < 1 ? 0 : (rawR - rawL) / totalLR;
+      this.#pan += (rawPan - this.#pan) * PAN_ALPHA;
     }
 
     return {
@@ -146,10 +191,13 @@ export class AudioReactive {
       treble: this.#treble,
       beat,
       centroid: this.#centroid,
+      spectralFlux: this.#spectralFlux,
+      onset,
       left: this.#left,
       right: this.#right,
       beatL,
       beatR,
+      pan: this.#pan,
       freqData: this.#freqData,
       timeBuf: this.#timeBuf,
     };
