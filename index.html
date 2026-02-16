@@ -33,74 +33,82 @@
         </div>
     </div>
 
-    <!-- file picker -->
-    <div class="file-area" id="fileArea">
-        <span>音声ファイルを選択 / ドロップ</span>
-        <span class="file-name" id="fileName"></span>
-        <input type="file" id="fileInput" accept="audio/*" multiple>
-    </div>
-
-    <!-- player -->
-    <div class="player">
-        <div class="player-row">
-            <button class="btn-round btn-nav" id="btnPrev" disabled>&#9664;&#9664;</button>
-            <button class="btn-round btn-play" id="btnPlay" disabled>&#9654;</button>
-            <button class="btn-round btn-nav" id="btnNext" disabled>&#9654;&#9654;</button>
-            <input type="range" class="seek-bar" id="seekBar" min="0" max="1" step="0.001" value="0">
-            <span class="time-label" id="timeLabel">0:00 / 0:00</span>
+    <div class="main-content">
+    <!-- panel: audio source -->
+    <div class="panel-source">
+        <!-- file picker -->
+        <div class="file-area" id="fileArea">
+            <span>音声ファイルを選択 / ドロップ</span>
+            <span class="file-name" id="fileName"></span>
+            <input type="file" id="fileInput" accept="audio/*" multiple>
         </div>
-        <ol class="track-list" id="trackList"></ol>
-    </div>
 
-    <!-- meter -->
-    <div>
-        <div class="meter-container">
-            <div class="meter-fill" id="meterFill"></div>
-            <div class="meter-gate" id="meterGate" style="left: 0%"></div>
-        </div>
-        <div class="meter-label">
-            <span>静か</span>
-            <span id="gateLabel"></span>
-            <span>大音量</span>
+        <!-- player -->
+        <div class="player">
+            <div class="player-row">
+                <button class="btn-round btn-nav" id="btnPrev" disabled>&#9664;&#9664;</button>
+                <button class="btn-round btn-play" id="btnPlay" disabled>&#9654;</button>
+                <button class="btn-round btn-nav" id="btnNext" disabled>&#9654;&#9654;</button>
+                <input type="range" class="seek-bar" id="seekBar" min="0" max="1" step="0.001" value="0">
+                <span class="time-label" id="timeLabel">0:00 / 0:00</span>
+            </div>
+            <ol class="track-list" id="trackList"></ol>
         </div>
     </div>
 
-    <!-- motor display (dual) -->
-    <div class="motor-display">
-        <div class="motor-unit">
-            <div class="motor-dir" id="parentDirVis">■</div>
-            <div class="motor-speed-val" id="parentSpeedVis">0</div>
-            <div class="motor-unit-label">Parent (L)</div>
+    <!-- panel: dashboard -->
+    <div class="panel-dashboard">
+        <!-- motor display (dual) -->
+        <div class="motor-display">
+            <div class="motor-unit">
+                <div class="motor-dir" id="parentDirVis">■</div>
+                <div class="motor-speed-val" id="parentSpeedVis">0</div>
+                <div class="motor-unit-label">Parent (L)</div>
+            </div>
+            <div class="motor-unit">
+                <div class="motor-dir" id="childDirVis">■</div>
+                <div class="motor-speed-val" id="childSpeedVis">0</div>
+                <div class="motor-unit-label">Child (R)</div>
+            </div>
         </div>
-        <div class="motor-unit">
-            <div class="motor-dir" id="childDirVis">■</div>
-            <div class="motor-speed-val" id="childSpeedVis">0</div>
-            <div class="motor-unit-label">Child (R)</div>
+
+        <!-- meter -->
+        <div>
+            <div class="meter-container">
+                <div class="meter-fill" id="meterFill"></div>
+                <div class="meter-gate" id="meterGate" style="left: 0%"></div>
+            </div>
+            <div class="meter-label">
+                <span>静か</span>
+                <span id="gateLabel"></span>
+                <span>大音量</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <label>
+                感度
+                <input type="range" id="sensitivity" min="1" max="6" step="0.1" value="2">
+            </label>
+            <label>
+                スムージング
+                <input type="range" id="smoothing" min="0.8" max="0.99" step="0.005" value="0.9">
+            </label>
+            <label>
+                余韻
+                <input type="range" id="sustain" min="0" max="0.98" step="0.01" value="0.5">
+            </label>
+            <label>
+                方向転換の間隔
+                <input type="range" id="beatCooldown" min="10" max="120" step="5" value="30">
+            </label>
+            <label>
+                マッピング
+                <select id="policySelect"></select>
+            </label>
+            <div id="policyControls"></div>
         </div>
     </div>
-
-    <div class="controls">
-        <label>
-            感度
-            <input type="range" id="sensitivity" min="1" max="6" step="0.1" value="2">
-        </label>
-        <label>
-            スムージング
-            <input type="range" id="smoothing" min="0.8" max="0.99" step="0.005" value="0.9">
-        </label>
-        <label>
-            余韻
-            <input type="range" id="sustain" min="0" max="0.98" step="0.01" value="0.5">
-        </label>
-        <label>
-            方向転換の間隔
-            <input type="range" id="beatCooldown" min="10" max="120" step="5" value="30">
-        </label>
-        <label>
-            マッピング
-            <select id="policySelect"></select>
-        </label>
-        <div id="policyControls"></div>
     </div>
 
 </div>
