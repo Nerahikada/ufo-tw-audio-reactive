@@ -248,12 +248,161 @@ function arrayAvg(arr) {
   return sum / arr.length;
 }
 
+// ---- PatternMapping ----
+
+/**
+ * Pattern mapping: generates oscillating motor patterns modulated
+ * by the audio level. The audio controls the amplitude of the
+ * pattern, not the speed directly.
+ *
+ * Patterns:
+ *   wave  — sinusoidal oscillation
+ *   pulse — short periodic bursts
+ *   climb — sawtooth ramp that resets on onset
+ *   chaos — random speed variation per channel
+ */
+export class PatternMapping {
+  name = "パターン";
+
+  #phase = 0;
+  #beatDirL = false;
+  #beatDirR = false;
+  #chaosL = 0;
+  #chaosR = 0;
+  #chaosTimer = 0;
+
+  params = [
+    {
+      id: "gateThreshold",
+      label: "ノイズゲート",
+      type: "range",
+      min: 0,
+      max: 30,
+      step: 1,
+      value: 0,
+    },
+    {
+      id: "separation",
+      label: "LR分離度",
+      type: "range",
+      min: 0,
+      max: 1,
+      step: 0.05,
+      value: 1,
+    },
+    {
+      id: "pattern",
+      label: "パターン",
+      type: "select",
+      options: [
+        { value: "wave", label: "ウェーブ" },
+        { value: "pulse", label: "パルス" },
+        { value: "climb", label: "クライム" },
+        { value: "chaos", label: "カオス" },
+      ],
+      value: "wave",
+    },
+    {
+      id: "rate",
+      label: "パターン速度",
+      type: "range",
+      min: 0.5,
+      max: 5,
+      step: 0.1,
+      value: 1,
+    },
+    {
+      id: "depth",
+      label: "変調深度",
+      type: "range",
+      min: 0,
+      max: 1,
+      step: 0.05,
+      value: 0.5,
+    },
+  ];
+
+  reset() {
+    this.#phase = 0;
+    this.#beatDirL = false;
+    this.#beatDirR = false;
+    this.#chaosL = 0;
+    this.#chaosR = 0;
+    this.#chaosTimer = 0;
+  }
+
+  map(f, p) {
+    this.#phase += p.rate / 60;
+
+    // Reset climb on onset
+    if (p.pattern === "climb" && f.onset) {
+      this.#phase = 0;
+    }
+
+    // Update chaos values periodically
+    if (p.pattern === "chaos") {
+      this.#chaosTimer++;
+      if (this.#chaosTimer >= 6) {
+        this.#chaosL = Math.random();
+        this.#chaosR = Math.random();
+        this.#chaosTimer = 0;
+      }
+    }
+
+    // Base audio level with stereo blend + gate
+    const sep = p.separation;
+    const gate = p.gateThreshold;
+    const mono = (f.left + f.right) / 2;
+    const effectiveL = mono + (f.left - mono) * sep;
+    const effectiveR = mono + (f.right - mono) * sep;
+    const baseL = gateToSpeed(effectiveL, gate);
+    const baseR = gateToSpeed(effectiveR, gate);
+
+    // Pattern modulation: depth controls how much the pattern
+    // shapes the output. At depth=0, output equals base level.
+    // At depth=1, output is fully pattern-shaped.
+    const modL = this.#patternValue(p.pattern, this.#phase, false);
+    const modR = this.#patternValue(p.pattern, this.#phase, true);
+    const d = p.depth;
+    const parentSpeed = clamp(Math.round(baseL * (1 - d + d * modL)), 0, 100);
+    const childSpeed = clamp(Math.round(baseR * (1 - d + d * modR)), 0, 100);
+
+    // Direction
+    if (f.beatL) this.#beatDirL = !this.#beatDirL;
+    if (f.beatR) this.#beatDirR = !this.#beatDirR;
+
+    return {
+      parentDir: this.#beatDirL ? Direction.CW : Direction.CCW,
+      parentSpeed,
+      childDir: this.#beatDirR ? Direction.CW : Direction.CCW,
+      childSpeed,
+    };
+  }
+
+  /** Returns 0–1 modulation value for the given pattern. */
+  #patternValue(pattern, phase, isRight) {
+    switch (pattern) {
+      case "wave":
+        return (Math.sin(phase * Math.PI * 2) + 1) / 2;
+      case "pulse":
+        return (phase % 1) < 0.3 ? 1 : 0;
+      case "climb":
+        return Math.min(phase, 1);
+      case "chaos":
+        return isRight ? this.#chaosR : this.#chaosL;
+      default:
+        return 1;
+    }
+  }
+}
+
 // ---- Policy registry ----
 
 /** All available mapping policies. Values are factory functions. */
 export const POLICIES = new Map([
   ["basic", () => new BasicMapping()],
   ["teasing", () => new TeasingMapping()],
+  ["pattern", () => new PatternMapping()],
 ]);
 
 export const DEFAULT_POLICY_ID = "basic";
