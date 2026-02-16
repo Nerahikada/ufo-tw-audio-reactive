@@ -271,3 +271,46 @@ button.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .footer a:hover { color: #eee; }
+
+/* ---- desktop ---- */
+
+@media (min-width: 768px) {
+    .container {
+        width: min(780px, 90vw);
+        padding: 32px 40px;
+    }
+
+    .header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .header-end {
+        flex-direction: row;
+        width: auto;
+        gap: 16px;
+    }
+
+    .header-end .btn-connect {
+        padding: 8px 24px;
+    }
+
+    .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 32px;
+    }
+
+    .track-list {
+        max-height: 200px;
+    }
+
+    .motor-unit {
+        padding: 16px 12px;
+    }
+
+    .motor-speed-val {
+        font-size: 3rem;
+    }
+}
