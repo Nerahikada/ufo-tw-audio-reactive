@@ -75,6 +75,20 @@ function renderPolicyControls(paramDefs) {
         updateGateMeter();
       });
       label.appendChild(input);
+    } else if (def.type === "select") {
+      const sel = document.createElement("select");
+      for (const opt of def.options) {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        sel.appendChild(option);
+      }
+      sel.value = def.value;
+      policyParams[def.id] = def.value;
+      sel.addEventListener("change", () => {
+        policyParams[def.id] = sel.value;
+      });
+      label.appendChild(sel);
     }
 
     $policyControls.appendChild(label);
