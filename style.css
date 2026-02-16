@@ -209,6 +209,19 @@ h1 { font-size: 1.4rem; text-align: center; }
 
 input[type=range] { width: 55%; accent-color: var(--color-accent); }
 
+select {
+    width: 55%;
+    padding: 4px 6px;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: var(--color-panel);
+    color: #eee;
+    font-size: 0.85rem;
+    accent-color: var(--color-accent);
+}
+
+#policyControls { display: contents; }
+
 /* ---- action button ---- */
 
 button.btn-action {
