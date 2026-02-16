@@ -150,6 +150,8 @@ export class AudioReactive {
       right: this.#right,
       beatL,
       beatR,
+      freqData: this.#freqData,
+      timeBuf: this.#timeBuf,
     };
   }
 
@@ -199,7 +201,7 @@ function clamp100(v) {
 
 // ---- Beat detection ----
 
-class BeatDetector {
+export class BeatDetector {
   #history = [];
   #cooldown = 0;
 
